@@ -1,7 +1,7 @@
 {
-  "name": "opencluely",
-  "version": "1.0.0",
-  "description": "AI Problem Solving Assistant",
+  "name": "opencluely-v2.0",
+  "version": "2.0.0",
+  "description": "AI-powered desktop assistant with dynamically loaded multi-skill support",
   "main": "main.js",
   "scripts": {
     "start": "env -u ELECTRON_RUN_AS_NODE electron .",
@@ -24,11 +24,17 @@
     "email": "info@techycsr.dev",
     "url": "https://techycsr.dev"
   },
+  "contributors": [
+  {
+    "name": "Rudranil Goswami",
+    "url": "https://github.com/rudra00434"
+  }
+],
   "repository": {
     "type": "git",
-    "url": "https://github.com/TechyCSR/OpenCluely"
+    "url": "https://github.com/rudra00434/OpenCluely-v2.0.git"
   },
-  "license": "ISC",
+  "license": "Apache-2.0",
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.2.0",
     "@google/genai": "^2.9.0",
