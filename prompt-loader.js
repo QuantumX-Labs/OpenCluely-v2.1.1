@@ -6,49 +6,81 @@ class PromptLoader {
     this.prompts = new Map();
     this.promptsLoaded = false;
     this.skillPromptSent = new Set();
-    // Focus only on DSA
+
+    // Skills that require programming-language-specific context.
     this.skillsRequiringProgrammingLanguage = ['dsa'];
   }
 
   /**
-   * Load all skill prompts from the prompts directory
+   * Load all skill prompts from the prompts directory.
+   * Every valid Markdown file represents an available skill.
    */
   loadPrompts() {
     if (this.promptsLoaded) {
       return;
     }
 
-    // In packaged builds asar-unpacked files are still reachable through
-    // their original path thanks to Electron's fs patching.
     const promptsDir = path.join(__dirname, 'prompts');
-    
+
     try {
       const files = fs.readdirSync(promptsDir);
-      
+
       for (const file of files) {
-        if (file.endsWith('.md')) {
-          const skillName = path.basename(file, '.md');
-          if (skillName !== 'dsa') continue; // only keep DSA
-          const filePath = path.join(promptsDir, file);
-          const promptContent = fs.readFileSync(filePath, 'utf8');
-          
-          this.prompts.set(skillName, promptContent);
+        // Only process Markdown files.
+        if (!file.toLowerCase().endsWith('.md')) {
+          continue;
         }
+
+        const filePath = path.join(promptsDir, file);
+
+        // Ignore directories and non-file entries.
+        if (!fs.statSync(filePath).isFile()) {
+          continue;
+        }
+
+        // Use lowercase filenames as canonical skill identifiers.
+        const skillName = path
+          .basename(file, path.extname(file))
+          .trim()
+          .toLowerCase();
+
+        if (!skillName) {
+          continue;
+        }
+
+        const promptContent = fs.readFileSync(filePath, 'utf8');
+
+        // Ignore empty prompt files.
+        if (!promptContent.trim()) {
+          console.warn(`Skipping empty skill prompt: ${file}`);
+          continue;
+        }
+
+        this.prompts.set(skillName, promptContent);
       }
-      
+
       this.promptsLoaded = true;
-      
+
+      console.log(
+        `Successfully loaded ${this.prompts.size} skill prompts:`,
+        this.getAvailableSkills()
+      );
+
     } catch (error) {
       console.error('Error loading skill prompts:', error);
-      throw new Error(`Failed to load skill prompts: ${error.message}`);
+
+      throw new Error(
+        `Failed to load skill prompts: ${error.message}`
+      );
     }
   }
 
   /**
-   * Get the system prompt for a specific skill with optional programming language injection
-   * @param {string} skillName - The name of the skill
-   * @param {string|null} programmingLanguage - Optional programming language to inject
-   * @returns {string|null} The system prompt content or null if not found
+   * Get the system prompt for a specific skill.
+   *
+   * @param {string} skillName
+   * @param {string|null} programmingLanguage
+   * @returns {string|null}
    */
   getSkillPrompt(skillName, programmingLanguage = null) {
     if (!this.promptsLoaded) {
@@ -56,129 +88,197 @@ class PromptLoader {
     }
 
     const normalizedSkillName = this.normalizeSkillName(skillName);
+
     let promptContent = this.prompts.get(normalizedSkillName);
-    
+
     if (!promptContent) {
       return null;
     }
 
-    // Inject programming language if provided and skill requires it
-    if (programmingLanguage && this.skillsRequiringProgrammingLanguage.includes(normalizedSkillName)) {
-      promptContent = this.injectProgrammingLanguage(promptContent, programmingLanguage, normalizedSkillName);
+    // Inject programming-language context only when required.
+    if (
+      programmingLanguage &&
+      this.requiresProgrammingLanguage(normalizedSkillName)
+    ) {
+      promptContent = this.injectProgrammingLanguage(
+        promptContent,
+        programmingLanguage,
+        normalizedSkillName
+      );
     }
 
     return promptContent;
   }
 
   /**
-   * Inject programming language context into skill prompts
-   * @param {string} promptContent - Original prompt content
-   * @param {string} programmingLanguage - Programming language to inject
-   * @param {string} skillName - Normalized skill name
-   * @returns {string} Modified prompt with programming language context
+   * Inject programming-language context into skill prompts.
+   *
+   * @param {string} promptContent
+   * @param {string} programmingLanguage
+   * @param {string} skillName
+   * @returns {string}
    */
-  injectProgrammingLanguage(promptContent, programmingLanguage, skillName) {
-    const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript' };
-    const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
-    const norm = (programmingLanguage || '').toLowerCase();
-    const languageTitle = languageMap[norm] || (programmingLanguage.charAt(0).toUpperCase() + programmingLanguage.slice(1));
-    const fenceTag = fenceTagMap[norm] || norm || 'text';
-    const languageUpper = (languageMap[norm] || languageTitle).toUpperCase();
-    
+  injectProgrammingLanguage(
+    promptContent,
+    programmingLanguage,
+    skillName
+  ) {
+    const languageMap = {
+      cpp: 'C++',
+      c: 'C',
+      python: 'Python',
+      java: 'Java',
+      javascript: 'JavaScript',
+      js: 'JavaScript'
+    };
+
+    const fenceTagMap = {
+      cpp: 'cpp',
+      c: 'c',
+      python: 'python',
+      java: 'java',
+      javascript: 'javascript',
+      js: 'javascript'
+    };
+
+    const normalizedLanguage = String(programmingLanguage || '')
+      .trim()
+      .toLowerCase();
+
+    const languageTitle =
+      languageMap[normalizedLanguage] ||
+      (
+        normalizedLanguage
+          ? normalizedLanguage.charAt(0).toUpperCase() +
+            normalizedLanguage.slice(1)
+          : 'Text'
+      );
+
+    const fenceTag =
+      fenceTagMap[normalizedLanguage] ||
+      normalizedLanguage ||
+      'text';
+
+    const languageUpper = languageTitle.toUpperCase();
+
     let languageInjection = '';
-    
+
     switch (skillName) {
       case 'dsa':
-        languageInjection = `\n\n## IMPLEMENTATION LANGUAGE: ${languageUpper}
+
+        languageInjection = `
+
+## IMPLEMENTATION LANGUAGE: ${languageUpper}
+
 STRICT REQUIREMENTS:
+
 - Respond ONLY in ${languageTitle}. Do not include any snippets or alternatives in other languages.
 - All code blocks must use triple backticks with the exact language tag: \`\`\`${fenceTag}\`\`\`.
 - Aim for the best possible time and space complexity; prefer optimal algorithms and data structures.
 - Provide: brief approach, then final ${languageTitle} implementation, followed by time/space complexity.
 - If the user's input is a problem statement (and does not include code), produce a complete, runnable ${languageTitle} solution without asking for clarification.
 - Avoid unnecessary verbosity; focus on correctness, clarity, and efficiency.`;
+
         break;
+
       default:
-        languageInjection = `\n\n## PROGRAMMING LANGUAGE: ${languageUpper}\nAll code and examples must be in ${languageTitle}. Use code fences with tag: \`\`\`${fenceTag}\`\`\`.`;
+
+        languageInjection = `
+
+## PROGRAMMING LANGUAGE: ${languageUpper}
+
+All code and examples must be in ${languageTitle}.
+Use code fences with tag: \`\`\`${fenceTag}\`\`\`.`;
+
+        break;
     }
 
     return promptContent + languageInjection;
   }
 
   /**
-   * Check if stored memory is empty (first time interaction)
-   * @param {Array} storedMemory - Current stored memory from your system
-   * @returns {boolean} True if memory is empty
+   * Check whether this is the first interaction.
+   *
+   * @param {Array} storedMemory
+   * @returns {boolean}
    */
   isFirstTimeInteraction(storedMemory) {
     return !storedMemory || storedMemory.length === 0;
   }
 
   /**
-   * Check if skill prompt should be sent as model memory
-   * @param {string} skillName - The name of the skill
-   * @param {Array} storedMemory - Current stored memory
-   * @returns {boolean} True if skill prompt should be sent as model memory
+   * Check whether a skill prompt should be sent as model memory.
+   *
+   * @param {string} skillName
+   * @param {Array} storedMemory
+   * @returns {boolean}
    */
   shouldSendAsModelMemory(skillName, storedMemory) {
     const normalizedSkillName = this.normalizeSkillName(skillName);
-    
-    // If stored memory is empty, this is the first time - send as model memory
+
     if (this.isFirstTimeInteraction(storedMemory)) {
       return true;
     }
 
-    // Check if we've already sent this skill's prompt as model memory
-    const hasSkillInMemory = storedMemory.some(event => 
-      event.skillUsed === normalizedSkillName && event.promptSentAsMemory === true
+    const hasSkillInMemory = storedMemory.some(
+      event =>
+        event.skillUsed === normalizedSkillName &&
+        event.promptSentAsMemory === true
     );
 
-    if (!hasSkillInMemory) {
-      return true;
-    }
-
-    return false;
+    return !hasSkillInMemory;
   }
 
   /**
-   * Prepare Gemini API request with model memory or regular message
-   * @param {string} skillName - The active skill
-   * @param {string} userMessage - The user's message/query
-   * @param {Array} storedMemory - Current stored memory
-   * @param {string|null} programmingLanguage - Optional programming language
-   * @returns {Object} Gemini API request configuration
+   * Prepare Gemini API request with model memory or regular message.
+   *
+   * @param {string} skillName
+   * @param {string} userMessage
+   * @param {Array} storedMemory
+   * @param {string|null} programmingLanguage
+   * @returns {Object}
    */
-  prepareGeminiRequest(skillName, userMessage, storedMemory, programmingLanguage = null) {
+  prepareGeminiRequest(
+    skillName,
+    userMessage,
+    storedMemory,
+    programmingLanguage = null
+  ) {
     const normalizedSkillName = this.normalizeSkillName(skillName);
-    const skillPrompt = this.getSkillPrompt(normalizedSkillName, programmingLanguage);
-    
+
+    const skillPrompt = this.getSkillPrompt(
+      normalizedSkillName,
+      programmingLanguage
+    );
+
     const requestConfig = {
-      model: 'gemini-pro', // or your preferred Gemini model
+      model: 'gemini-pro',
       contents: [],
       systemInstruction: null,
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 2048
       }
     };
 
-    // If stored memory is empty or skill prompt not sent, use model memory
-    if (this.shouldSendAsModelMemory(skillName, storedMemory)) {
+    if (
+      this.shouldSendAsModelMemory(
+        normalizedSkillName,
+        storedMemory
+      )
+    ) {
       if (skillPrompt) {
-        // Send skill prompt as system instruction (model memory)
         requestConfig.systemInstruction = {
           parts: [{ text: skillPrompt }]
         };
-        
-        // Add user message as regular content
+
         requestConfig.contents.push({
           role: 'user',
           parts: [{ text: userMessage }]
         });
-        
-        // Mark that we're sending this as model memory
+
         this.skillPromptSent.add(normalizedSkillName);
-        
+
         return {
           ...requestConfig,
           isUsingModelMemory: true,
@@ -186,16 +286,18 @@ STRICT REQUIREMENTS:
           programmingLanguage
         };
       } else {
-        console.warn(`No system prompt found for skill: ${normalizedSkillName}`);
+        console.warn(
+          `No system prompt found for skill: ${normalizedSkillName}`
+        );
       }
     }
 
-    // Regular message (stored memory not empty, prompt already sent)
+    // Regular message when the skill prompt has already been sent.
     requestConfig.contents.push({
       role: 'user',
       parts: [{ text: userMessage }]
     });
-    
+
     return {
       ...requestConfig,
       isUsingModelMemory: false,
@@ -205,17 +307,32 @@ STRICT REQUIREMENTS:
   }
 
   /**
-   * Alternative method: Get separate components for manual API construction
-   * @param {string} skillName - The active skill
-   * @param {string} userMessage - The user's message/query
-   * @param {Array} storedMemory - Current stored memory
-   * @param {string|null} programmingLanguage - Optional programming language
-   * @returns {Object} Separated components for manual request building
+   * Get separate components for manual API construction.
+   *
+   * @param {string} skillName
+   * @param {string} userMessage
+   * @param {Array} storedMemory
+   * @param {string|null} programmingLanguage
+   * @returns {Object}
    */
-  getRequestComponents(skillName, userMessage, storedMemory, programmingLanguage = null) {
+  getRequestComponents(
+    skillName,
+    userMessage,
+    storedMemory,
+    programmingLanguage = null
+  ) {
     const normalizedSkillName = this.normalizeSkillName(skillName);
-    const shouldUseModelMemory = this.shouldSendAsModelMemory(skillName, storedMemory);
-    const skillPrompt = this.getSkillPrompt(normalizedSkillName, programmingLanguage);
+
+    const shouldUseModelMemory =
+      this.shouldSendAsModelMemory(
+        normalizedSkillName,
+        storedMemory
+      );
+
+    const skillPrompt = this.getSkillPrompt(
+      normalizedSkillName,
+      programmingLanguage
+    );
 
     return {
       skillName: normalizedSkillName,
@@ -223,58 +340,89 @@ STRICT REQUIREMENTS:
       skillPrompt,
       shouldUseModelMemory,
       isFirstTime: this.isFirstTimeInteraction(storedMemory),
-      modelMemory: shouldUseModelMemory && skillPrompt ? skillPrompt : null,
+      modelMemory:
+        shouldUseModelMemory && skillPrompt
+          ? skillPrompt
+          : null,
       messageContent: userMessage,
       programmingLanguage,
-      requiresProgrammingLanguage: this.skillsRequiringProgrammingLanguage.includes(normalizedSkillName)
+      requiresProgrammingLanguage:
+        this.requiresProgrammingLanguage(normalizedSkillName)
     };
   }
 
   /**
-   * Update stored memory after successful API call
-   * @param {Array} storedMemory - Current stored memory array
-   * @param {string} skillName - The skill that was used
-   * @param {boolean} wasModelMemoryUsed - Whether model memory was used
-   * @param {string} userMessage - The user message
-   * @param {string} aiResponse - The AI response
-   * @param {string|null} programmingLanguage - Programming language used
-   * @returns {Array} Updated stored memory
+   * Update stored memory after a successful API call.
+   *
+   * @param {Array} storedMemory
+   * @param {string} skillName
+   * @param {boolean} wasModelMemoryUsed
+   * @param {string} userMessage
+   * @param {string} aiResponse
+   * @param {string|null} programmingLanguage
+   * @returns {Array}
    */
-  updateStoredMemory(storedMemory, skillName, wasModelMemoryUsed, userMessage, aiResponse, programmingLanguage = null) {
+  updateStoredMemory(
+    storedMemory,
+    skillName,
+    wasModelMemoryUsed,
+    userMessage,
+    aiResponse,
+    programmingLanguage = null
+  ) {
     const normalizedSkillName = this.normalizeSkillName(skillName);
+
     const updatedMemory = [...(storedMemory || [])];
-    
+
     const memoryEntry = {
       timestamp: new Date().toISOString(),
       skillUsed: normalizedSkillName,
       promptSentAsMemory: wasModelMemoryUsed,
       userMessage,
-      aiResponse: aiResponse ? aiResponse.substring(0, 200) + '...' : null, // Truncated for storage
-      action: wasModelMemoryUsed ? 'MODEL_MEMORY_SENT' : 'REGULAR_MESSAGE',
+      aiResponse: aiResponse
+        ? aiResponse.substring(0, 200) + '...'
+        : null,
+      action: wasModelMemoryUsed
+        ? 'MODEL_MEMORY_SENT'
+        : 'REGULAR_MESSAGE',
       programmingLanguage: programmingLanguage || null
     };
-    
+
     updatedMemory.push(memoryEntry);
-        
+
     return updatedMemory;
   }
 
   /**
-   * Example usage method showing complete flow
-   * @param {string} skillName - The active skill
-   * @param {string} userMessage - User's message
-   * @param {Array} storedMemory - Current stored memory
-   * @param {string|null} programmingLanguage - Optional programming language
-   * @returns {Object} Complete flow result
+   * Process a user request.
+   *
+   * @param {string} skillName
+   * @param {string} userMessage
+   * @param {Array} storedMemory
+   * @param {string|null} programmingLanguage
+   * @returns {Promise<Object>}
    */
-  async processUserRequest(skillName, userMessage, storedMemory, programmingLanguage = null) {
+  async processUserRequest(
+    skillName,
+    userMessage,
+    storedMemory,
+    programmingLanguage = null
+  ) {
     try {
-      // Get request components
-      const components = this.getRequestComponents(skillName, userMessage, storedMemory, programmingLanguage);
+      const components = this.getRequestComponents(
+        skillName,
+        userMessage,
+        storedMemory,
+        programmingLanguage
+      );
 
-      // Prepare the actual API request
-      const geminiRequest = this.prepareGeminiRequest(skillName, userMessage, storedMemory, programmingLanguage);
-      
+      const geminiRequest = this.prepareGeminiRequest(
+        skillName,
+        userMessage,
+        storedMemory,
+        programmingLanguage
+      );
+
       return {
         requestReady: true,
         geminiRequest,
@@ -282,9 +430,10 @@ STRICT REQUIREMENTS:
         needsMemoryUpdate: true,
         programmingLanguage
       };
-      
+
     } catch (error) {
       console.error('Error processing user request:', error);
+
       return {
         requestReady: false,
         error: error.message,
@@ -294,64 +443,81 @@ STRICT REQUIREMENTS:
   }
 
   /**
-   * Check if a skill requires programming language context
-   * @param {string} skillName - The skill name to check
-   * @returns {boolean} True if skill requires programming language
+   * Check whether a skill requires programming-language context.
+   *
+   * @param {string} skillName
+   * @returns {boolean}
    */
   requiresProgrammingLanguage(skillName) {
     const normalizedSkillName = this.normalizeSkillName(skillName);
-    return this.skillsRequiringProgrammingLanguage.includes(normalizedSkillName);
+
+    return this.skillsRequiringProgrammingLanguage.includes(
+      normalizedSkillName
+    );
   }
 
   /**
-   * Get list of skills that require programming language context
-   * @returns {Array<string>} Array of skill names that require programming language
+   * Get skills that require programming-language context.
+   *
+   * @returns {Array<string>}
    */
   getSkillsRequiringProgrammingLanguage() {
     return [...this.skillsRequiringProgrammingLanguage];
   }
 
   /**
-   * Normalize skill names to match file names
-   * @param {string} skillName - Raw skill name
-   * @returns {string} Normalized skill name
+   * Normalize skill names to match prompt filenames.
+   *
+   * @param {string} skillName
+   * @returns {string}
    */
   normalizeSkillName(skillName) {
-    if (!skillName) return 'general';
-    
-    // Convert to lowercase and handle common variations
+    if (
+      typeof skillName !== 'string' ||
+      !skillName.trim()
+    ) {
+      return 'general';
+    }
+
     const normalized = skillName.toLowerCase().trim();
-    
-    // Map common variations to standard names
+
     const skillMap = {
       'dsa': 'dsa',
       'data-structures': 'dsa',
       'algorithms': 'dsa',
       'data-structures-algorithms': 'dsa',
+
       'behavioral': 'behavioral',
       'behavioral-interview': 'behavioral',
       'behavior': 'behavioral',
+
       'sales': 'sales',
       'selling': 'sales',
       'business-development': 'sales',
+
       'presentation': 'presentation',
       'presentations': 'presentation',
       'public-speaking': 'presentation',
+
       'data-science': 'data-science',
       'datascience': 'data-science',
       'machine-learning': 'data-science',
       'ml': 'data-science',
+
       'programming': 'programming',
       'coding': 'programming',
       'software-development': 'programming',
       'development': 'programming',
+
       'devops': 'devops',
       'dev-ops': 'devops',
       'infrastructure': 'devops',
+
       'system-design': 'system-design',
       'systems-design': 'system-design',
       'architecture': 'system-design',
       'distributed-systems': 'system-design',
+
       'negotiation': 'negotiation',
       'negotiating': 'negotiation',
       'conflict-resolution': 'negotiation'
@@ -361,45 +527,50 @@ STRICT REQUIREMENTS:
   }
 
   /**
-   * Get list of available skills
-   * @returns {Array<string>} Array of available skill names
+   * Get dynamically discovered available skills.
+   *
+   * Every valid .md file inside the prompts directory
+   * is considered an available skill.
+   *
+   * @returns {Array<string>}
    */
   getAvailableSkills() {
     if (!this.promptsLoaded) {
       this.loadPrompts();
     }
-    return ['dsa'];
+
+    return Array.from(this.prompts.keys()).sort();
   }
 
   /**
-   * Reset the prompt sent tracking and clear stored memory
+   * Reset prompt tracking for a new session.
    */
   resetSession() {
     this.skillPromptSent.clear();
   }
 
   /**
-   * Get current session statistics
-   * @returns {Object} Statistics about current session
+   * Get current session statistics.
+   *
+   * @returns {Object}
    */
   getSessionStats() {
     if (!this.promptsLoaded) {
       this.loadPrompts();
     }
 
-    const stats = {
+    return {
       totalPrompts: this.prompts.size,
       skillsUsedInSession: this.skillPromptSent.size,
       availableSkills: this.getAvailableSkills(),
       skillsUsed: Array.from(this.skillPromptSent),
-      skillsRequiringProgrammingLanguage: this.skillsRequiringProgrammingLanguage
+      skillsRequiringProgrammingLanguage:
+        this.skillsRequiringProgrammingLanguage
     };
-
-    return stats;
   }
 }
 
-// Export singleton instance
+// Export singleton instance.
 const promptLoader = new PromptLoader();
 
 module.exports = {

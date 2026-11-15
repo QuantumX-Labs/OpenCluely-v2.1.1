@@ -78,6 +78,7 @@ app.commandLine.appendSwitch("no-pings");
 const logger = require("./src/core/logger").createServiceLogger("MAIN");
 const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
+const { promptLoader } = require("./prompt-loader");
 
 // ── Global crash guard ──
 // The speech path spawns external processes (Whisper CLI, and on macOS/Linux
@@ -113,14 +114,14 @@ class ApplicationController {
     this.isReady = false;
     this.starting = false;
     this.activeSkill = "dsa";
-  // Default to C++ so language is enforced from first run
-  this.codingLanguage = "cpp";
+    // Default to C++ so language is enforced from first run
+    this.codingLanguage = "cpp";
     this.speechAvailable = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
-    // pauses). We buffer fragments and debounce so one question yields one LLM
-    // call instead of several slow, half-answered ones.
+    // pauses). We buffer fragments and debounce so one question yields one
+    // LLM call instead of several slow, half-answered ones.
     this._utteranceBuffer = "";
     this._utteranceTimer = null;
     this._utteranceDispatchInFlight = false;
@@ -278,7 +279,7 @@ class ApplicationController {
             windowManager.broadcastToAllWindows("first-run", status);
             logger.info("First-run onboarding: wizard opened");
           } catch (e) {
-            logger.warn("Could not open first-run onboarding window", {
+            logger.warn("Could not open onboarding window", {
               error: e.message
             });
             // Fallback to legacy settings prompt
@@ -308,7 +309,7 @@ class ApplicationController {
   setupNetworkConfiguration() {
     // Configure session to handle network requests better
     const ses = session.defaultSession;
-    
+
     // Allow HTTPS requests to Google APIs
     ses.webRequest.onBeforeSendHeaders((details, callback) => {
       if (details.url.includes('generativelanguage.googleapis.com')) {
@@ -319,7 +320,7 @@ class ApplicationController {
       }
       callback({ requestHeaders: details.requestHeaders });
     });
-    
+
     // Handle certificate errors for Google APIs
     ses.setCertificateVerifyProc((request, callback) => {
       if (request.hostname === 'generativelanguage.googleapis.com') {
@@ -328,7 +329,7 @@ class ApplicationController {
         callback(-2); // Use default verification
       }
     });
-    
+
     logger.debug('Network configuration applied for Gemini API');
   }
 
@@ -456,10 +457,10 @@ class ApplicationController {
   }
 
   setupIPCHandlers() {
-  ipcMain.handle("take-screenshot", () => this.triggerScreenshotOCR());
-  ipcMain.handle("list-displays", () => captureService.listDisplays());
-  ipcMain.handle("capture-area", (event, options) => captureService.captureAndProcess(options));
-    
+    ipcMain.handle("take-screenshot", () => this.triggerScreenshotOCR());
+    ipcMain.handle("list-displays", () => captureService.listDisplays());
+    ipcMain.handle("capture-area", (event, options) => captureService.captureAndProcess(options));
+
     // Provide reliable clipboard write via main process
     ipcMain.handle("copy-to-clipboard", (event, text) => {
       try {
@@ -471,7 +472,7 @@ class ApplicationController {
         return false;
       }
     });
-    
+
     ipcMain.handle("get-speech-availability", () => {
       return speechService.isAvailable ? speechService.isAvailable() : false;
     });
@@ -695,7 +696,7 @@ class ApplicationController {
       try {
         const connectivity = await llmService.checkNetworkConnectivity();
         const apiTest = await llmService.testConnection();
-        
+
         return {
           success: true,
           connectivity,
@@ -849,9 +850,7 @@ class ApplicationController {
     });
 
     ipcMain.handle("update-active-skill", (event, skill) => {
-      this.activeSkill = skill;
-      windowManager.broadcastToAllWindows("skill-changed", { skill });
-      return { success: true };
+      return this.setActiveSkill(skill, "skill-changed");
     });
 
     ipcMain.handle("restart-app-for-stealth", () => {
@@ -922,10 +921,9 @@ class ApplicationController {
       this.saveSettings(settings);
     });
 
-    // Handle update skill
+    // Handle skill changes requested by the settings renderer.
     ipcMain.on("update-skill", (event, skill) => {
-      this.activeSkill = skill;
-      windowManager.broadcastToAllWindows("skill-updated", { skill });
+      this.setActiveSkill(skill, "skill-updated");
     });
 
     // Handle quit app (alternative method)
@@ -1027,43 +1025,93 @@ class ApplicationController {
     // Interactive mode: Right arrow does nothing
   }
 
-  navigateSkill(direction) {
-    const availableSkills = [
-      "dsa",
-    ];
+  /**
+   * Validate and activate a skill consistently across the main process
+   * and session manager.
+   *
+   * @param {string} skill - Requested skill identifier.
+   * @param {string} eventChannel - Renderer event channel to broadcast.
+   * @returns {{success: boolean, skill?: string, error?: string}}
+   */
+  setActiveSkill(skill, eventChannel = "skill-updated") {
+    if (typeof skill !== "string" || !skill.trim()) {
+      return {
+        success: false,
+        error: "A valid skill name must be provided."
+      };
+    }
 
-    const currentIndex = availableSkills.indexOf(this.activeSkill);
-    if (currentIndex === -1) {
-      logger.warn("Current skill not found in available skills", {
-        currentSkill: this.activeSkill,
-        availableSkills,
+    const normalizedSkill = promptLoader.normalizeSkillName(skill);
+    const availableSkills = promptLoader.getAvailableSkills();
+
+    if (!availableSkills.includes(normalizedSkill)) {
+      logger.warn("Attempted to activate an unavailable skill", {
+        requestedSkill: skill,
+        normalizedSkill,
+        availableSkills
       });
+
+      return {
+        success: false,
+        error: `Unknown skill: ${skill}`
+      };
+    }
+
+    const previousSkill = this.activeSkill;
+    const skillChanged = previousSkill !== normalizedSkill;
+
+    this.activeSkill = normalizedSkill;
+
+    // Keep conversation/session context aligned with the selected skill.
+    if (sessionManager.currentSkill !== normalizedSkill) {
+      sessionManager.setActiveSkill(normalizedSkill);
+    }
+
+    // Avoid duplicate broadcasts when multiple IPC paths report the same change.
+    if (skillChanged) {
+      const channel = eventChannel === "skill-changed"
+        ? "skill-changed"
+        : "skill-updated";
+
+      windowManager.broadcastToAllWindows(channel, {
+        skill: normalizedSkill
+      });
+    }
+
+    logger.info("Active skill updated", {
+      previousSkill,
+      currentSkill: normalizedSkill,
+      skillChanged
+    });
+
+    return {
+      success: true,
+      skill: normalizedSkill
+    };
+  }
+
+  navigateSkill(direction) {
+    const availableSkills = promptLoader.getAvailableSkills();
+
+    if (availableSkills.length === 0) {
+      logger.warn("No available skills found; skill navigation skipped");
       return;
     }
 
-    // Calculate new index with wrapping
-    let newIndex = currentIndex + direction;
-    if (newIndex >= availableSkills.length) {
-      newIndex = 0; // Wrap to beginning
-    } else if (newIndex < 0) {
-      newIndex = availableSkills.length - 1; // Wrap to end
+    if (direction !== 1 && direction !== -1) {
+      logger.warn("Invalid skill navigation direction", { direction });
+      return;
     }
 
+    const currentIndex = availableSkills.indexOf(this.activeSkill);
+    const newIndex = currentIndex === -1
+      ? (direction > 0 ? 0 : availableSkills.length - 1)
+      : (currentIndex + direction + availableSkills.length) % availableSkills.length;
+
     const newSkill = availableSkills[newIndex];
-    this.activeSkill = newSkill;
-
-    // Update session manager with the new skill
-    sessionManager.setActiveSkill(newSkill);
-
-    logger.info("Skill navigated via global shortcut", {
-      from: availableSkills[currentIndex],
-      to: newSkill,
-      direction: direction > 0 ? "down" : "up",
-    });
-
-    // Broadcast the skill change to all windows
-    windowManager.broadcastToAllWindows("skill-updated", { skill: newSkill });
+    this.setActiveSkill(newSkill, "skill-updated");
   }
+
 
   async triggerScreenshotOCR() {
     if (!this.isReady) {
@@ -1076,7 +1124,7 @@ class ApplicationController {
     try {
       windowManager.showLLMLoading();
 
-  const capture = await captureService.captureAndProcess();
+      const capture = await captureService.captureAndProcess();
 
       if (!capture.imageBuffer || !capture.imageBuffer.length) {
         windowManager.hideLLMResponse();
@@ -1087,8 +1135,8 @@ class ApplicationController {
       // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
 
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
+      const needsProgrammingLanguage =
+        promptLoader.requiresProgrammingLanguage(this.activeSkill);
 
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `img-${Date.now()}-${this._responseSeq}`;
@@ -1135,7 +1183,7 @@ class ApplicationController {
 
       windowManager.hideLLMResponse();
       this.broadcastOCRError(error.message);
-      
+
       sessionManager.addConversationEvent({
         role: 'system',
         content: `Screenshot OCR failed: ${error.message}`,
@@ -1153,8 +1201,8 @@ class ApplicationController {
       sessionManager.addUserInput(text, 'llm_input');
 
       // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
+      const needsProgrammingLanguage =
+        promptLoader.requiresProgrammingLanguage(this.activeSkill);
 
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `chat-${Date.now()}-${this._responseSeq}`;
@@ -1322,8 +1370,8 @@ class ApplicationController {
       });
 
       // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
+      const needsProgrammingLanguage =
+        promptLoader.requiresProgrammingLanguage(this.activeSkill);
 
       // Stream the answer progressively to the configured speech target.
       // A unique messageId ties the start/chunk/final events to one bubble so
@@ -1414,7 +1462,7 @@ class ApplicationController {
           skill: this.activeSkill,
           fallbackResponse: fallbackResult.response
         });
-        
+
       } catch (fallbackError) {
         logger.error("Fallback response also failed", {
           fallbackError: fallbackError.message
@@ -1591,6 +1639,7 @@ class ApplicationController {
     return {
       codingLanguage: this.codingLanguage || "cpp",
       activeSkill: this.activeSkill || "dsa",
+      availableSkills: promptLoader.getAvailableSkills(),
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
@@ -1615,6 +1664,26 @@ class ApplicationController {
 
   saveSettings(settings) {
     try {
+      // Validate the requested skill before applying any other setting changes.
+      if (settings.activeSkill !== undefined && settings.activeSkill !== null) {
+        const availableSkills = promptLoader.getAvailableSkills();
+        const normalizedSkill = typeof settings.activeSkill === "string"
+          ? promptLoader.normalizeSkillName(settings.activeSkill)
+          : null;
+
+        if (!normalizedSkill || !availableSkills.includes(normalizedSkill)) {
+          logger.warn("Rejected settings update containing an unknown skill", {
+            requestedSkill: settings.activeSkill,
+            availableSkills
+          });
+
+          return {
+            success: false,
+            error: `Unknown skill: ${settings.activeSkill}`
+          };
+        }
+      }
+
       // ── In-memory updates + window broadcasts ──
       if (settings.codingLanguage) {
         this.codingLanguage = settings.codingLanguage;
@@ -1623,10 +1692,10 @@ class ApplicationController {
         });
       }
       if (settings.activeSkill) {
-        this.activeSkill = settings.activeSkill;
-        windowManager.broadcastToAllWindows("skill-updated", {
-          skill: settings.activeSkill,
-        });
+        const skillResult = this.setActiveSkill(settings.activeSkill, "skill-updated");
+        if (!skillResult.success) {
+          return skillResult;
+        }
       }
       if (settings.appIcon) {
         this.appIcon = settings.appIcon;
@@ -1642,7 +1711,7 @@ class ApplicationController {
 
       // ── Persist provider / API-key fields back to .env ──
       // The settings UI is now the source of truth for these values.
-      // Writing to .env ensures they survive app restarts and are picked
+      // Writing to .env ensures they survive restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
       if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {

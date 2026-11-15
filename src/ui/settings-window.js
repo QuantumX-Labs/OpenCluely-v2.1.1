@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', () => {    
+document.addEventListener('DOMContentLoaded', () => {
     const logger = {
         info: (...args) => console.log('[SettingsWindowUI]', ...args)
     };
@@ -28,14 +28,119 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    // Normalize skill identifiers so the settings window uses the same
+    // stable IDs as the main process.
+    const normalizeSkillId = (skill) => {
+        if (typeof skill !== 'string') return '';
+
+        return skill
+            .trim()
+            .replace(/\.md$/i, '')
+            .toLowerCase()
+            .replace(/[\s_]+/g, '-');
+    };
+
+    // Convert prompt filenames/skill IDs into readable dropdown labels.
+    const getSkillDisplayName = (skill) => {
+        const normalizedSkill = normalizeSkillId(skill);
+
+        const specialNames = {
+            dsa: 'DSA',
+            ai: 'AI',
+            ml: 'ML',
+            api: 'API',
+            sql: 'SQL',
+            dbms: 'DBMS',
+            os: 'OS',
+            cn: 'CN',
+            ui: 'UI',
+            ux: 'UX',
+            devops: 'DevOps'
+        };
+
+        return normalizedSkill
+            .split('-')
+            .filter(Boolean)
+            .map(part => specialNames[part] || (part.charAt(0).toUpperCase() + part.slice(1)))
+            .join(' ');
+    };
+
+    // Populate the skill dropdown from the skills discovered by prompt-loader.
+    // Existing HTML options are retained as a backward-compatible fallback.
+    const populateActiveSkillOptions = (availableSkills, activeSkill) => {
+        if (!activeSkillSelect) return;
+
+        let skills = [];
+
+        if (Array.isArray(availableSkills)) {
+            skills = availableSkills
+                .map(normalizeSkillId)
+                .filter(Boolean);
+        } else {
+            skills = Array.from(activeSkillSelect.options)
+                .map(option => normalizeSkillId(option.value))
+                .filter(Boolean);
+        }
+
+        skills = [...new Set(skills)];
+
+        // Safe fallback for older main-process versions or an empty prompt directory.
+        if (skills.length === 0) {
+            skills = ['dsa'];
+        }
+
+        activeSkillSelect.replaceChildren();
+
+        skills.forEach(skill => {
+            const option = document.createElement('option');
+            option.value = skill;
+            option.textContent = getSkillDisplayName(skill);
+            activeSkillSelect.appendChild(option);
+        });
+
+        const requestedSkill = normalizeSkillId(activeSkill);
+
+        const selectedSkill = skills.includes(requestedSkill)
+            ? requestedSkill
+            : (skills.includes('dsa') ? 'dsa' : skills[0]);
+
+        activeSkillSelect.value = selectedSkill;
+        activeSkillSelect.disabled = skills.length === 0;
+    };
+
+    // Keep the dropdown synchronized when a skill is changed from the overlay.
+    const syncActiveSkillSelection = (payload) => {
+        if (!activeSkillSelect) return;
+
+        const skill = typeof payload === 'string'
+            ? payload
+            : payload?.skill;
+
+        const normalizedSkill = normalizeSkillId(skill);
+
+        if (!normalizedSkill) return;
+
+        const optionExists = Array.from(activeSkillSelect.options)
+            .some(option => option.value === normalizedSkill);
+
+        if (optionExists) {
+            activeSkillSelect.value = normalizedSkill;
+        } else {
+            // Refresh the discovered list if the main process reports a new skill.
+            requestCurrentSettings();
+        }
+    };
+
     // Request current settings when window opens
     const requestCurrentSettings = () => {
         if (window.electronAPI && window.electronAPI.getSettings) {
-            window.electronAPI.getSettings().then(settings => {
-                loadSettingsIntoUI(settings);
-            }).catch(error => {
-                console.error('Failed to get settings:', error);
-            });
+            window.electronAPI.getSettings()
+                .then(settings => {
+                    loadSettingsIntoUI(settings);
+                })
+                .catch(error => {
+                    console.error('Failed to get settings:', error);
+                });
         }
     };
 
@@ -54,17 +159,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (window.api && window.api.send) {
                     window.api.send('quit-app');
                 }
-                
+
                 // Also try the electron API if available
                 if (window.electronAPI && window.electronAPI.quit) {
                     window.electronAPI.quit();
                 }
-                
+
                 // Fallback: close the window
                 setTimeout(() => {
                     window.close();
                 }, 500);
-                
+
             } catch (error) {
                 console.error('Error quitting app:', error);
                 window.close();
@@ -73,20 +178,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Function to load settings into UI
-    const loadSettingsIntoUI = (settings) => {
-        if (settings.speechProvider && speechProviderSelect) speechProviderSelect.value = settings.speechProvider;
+    const loadSettingsIntoUI = (settings = {}) => {
+        if (!settings || typeof settings !== 'object') {
+            console.warn('Received invalid settings payload:', settings);
+            return;
+        }
+
+        if (settings.speechProvider && speechProviderSelect) {
+            speechProviderSelect.value = settings.speechProvider;
+        }
+
         // Always set the input value, even if empty, so the user sees what's
-        // currently configured (including env-derived defaults). Previously
-        // empty strings were skipped which left stale UI values.
+        // currently configured (including env-derived defaults).
         if (azureKeyInput) azureKeyInput.value = settings.azureKey || '';
         if (azureRegionInput) azureRegionInput.value = settings.azureRegion || '';
         if (whisperCommandInput) whisperCommandInput.value = settings.whisperCommand || '';
         if (whisperModelInput) whisperModelInput.value = settings.whisperModel || '';
         if (whisperLanguageInput) whisperLanguageInput.value = settings.whisperLanguage || '';
-        if (whisperDeviceSelect) whisperDeviceSelect.value = settings.whisperDevice || 'auto';
-        if (whisperCaptureModeSelect) whisperCaptureModeSelect.value = settings.whisperCaptureMode || 'vad';
-        if (whisperResponseTargetSelect) whisperResponseTargetSelect.value = settings.whisperResponseTarget || 'both';
-        if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
+
+        if (whisperDeviceSelect) {
+            whisperDeviceSelect.value = settings.whisperDevice || 'auto';
+        }
+
+        if (whisperCaptureModeSelect) {
+            whisperCaptureModeSelect.value = settings.whisperCaptureMode || 'vad';
+        }
+
+        if (whisperResponseTargetSelect) {
+            whisperResponseTargetSelect.value = settings.whisperResponseTarget || 'both';
+        }
+
+        if (whisperSegmentMsInput) {
+            whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
+        }
+
         if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
@@ -95,12 +220,18 @@ document.addEventListener('DOMContentLoaded', () => {
             codingLanguageSelect.value = settings.codingLanguage || 'cpp';
         }
 
-        if (settings.activeSkill && activeSkillSelect) activeSkillSelect.value = settings.activeSkill;
+        // Load the dynamic skill list and then select the active skill.
+        populateActiveSkillOptions(
+            settings.availableSkills,
+            settings.activeSkill
+        );
 
         // Handle icon selection
         const selectedIcon = settings.selectedIcon || settings.appIcon;
+
         if (selectedIcon && iconGrid) {
             const iconOptions = iconGrid.querySelectorAll('.icon-option');
+
             iconOptions.forEach(option => {
                 if (option.dataset.icon === selectedIcon) {
                     option.classList.add('selected');
@@ -124,18 +255,41 @@ document.addEventListener('DOMContentLoaded', () => {
             requestCurrentSettings();
         });
 
-    // Listen for coding language changes from other windows via helper
-    window.electronAPI.onCodingLanguageChanged((event, data) => {
-            if (data && data.language && codingLanguageSelect) {
-                codingLanguageSelect.value = data.language;
-                console.log('Language updated from overlay window:', data.language);
-            }
-    });
+        // Listen for coding language changes from the overlay window.
+        if (typeof window.electronAPI.onCodingLanguageChanged === 'function') {
+            window.electronAPI.onCodingLanguageChanged((event, data) => {
+                if (data && data.language && codingLanguageSelect) {
+                    codingLanguageSelect.value = data.language;
+
+                    console.log(
+                        'Language updated from overlay window:',
+                        data.language
+                    );
+                }
+            });
+        }
+
+        // Keep the selected skill synchronized with changes made in the overlay.
+        if (typeof window.electronAPI.onSkillChanged === 'function') {
+            window.electronAPI.onSkillChanged((event, data) => {
+                syncActiveSkillSelection(data);
+            });
+        }
     }
+
+    // Backup listeners for skill broadcasts delivered through window.api.
+    window.api.receive('skill-updated', (data) => {
+        syncActiveSkillSelection(data);
+    });
+
+    window.api.receive('skill-changed', (data) => {
+        syncActiveSkillSelection(data);
+    });
 
     // Save settings helper function
     const saveSettings = () => {
         const settings = {};
+
         if (speechProviderSelect) settings.speechProvider = speechProviderSelect.value;
         if (azureKeyInput) settings.azureKey = azureKeyInput.value;
         if (azureRegionInput) settings.azureRegion = azureRegionInput.value;
@@ -150,12 +304,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
-        
+
         window.api.send('save-settings', settings);
     };
 
     const updateSpeechFieldStates = () => {
-        const provider = speechProviderSelect ? speechProviderSelect.value : 'azure';
+        const provider = speechProviderSelect
+            ? speechProviderSelect.value
+            : 'azure';
 
         // Show/hide provider-specific field groups instead of just disabling
         // them. This keeps the settings UI clean — only the relevant fields
@@ -167,9 +323,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (azureGroup) {
             azureGroup.style.display = provider === 'azure' ? '' : 'none';
         }
+
         if (whisperGroup) {
             whisperGroup.style.display = provider === 'whisper' ? '' : 'none';
         }
+
         if (azureNote) {
             azureNote.style.display = provider === 'azure' ? '' : 'none';
         }
@@ -178,8 +336,16 @@ document.addEventListener('DOMContentLoaded', () => {
         [azureKeyInput, azureRegionInput].forEach(input => {
             if (input) input.disabled = provider !== 'azure';
         });
-        [whisperCommandInput, whisperModelInput, whisperLanguageInput, whisperDeviceSelect,
-            whisperCaptureModeSelect, whisperResponseTargetSelect, whisperSegmentMsInput].forEach(input => {
+
+        [
+            whisperCommandInput,
+            whisperModelInput,
+            whisperLanguageInput,
+            whisperDeviceSelect,
+            whisperCaptureModeSelect,
+            whisperResponseTargetSelect,
+            whisperSegmentMsInput
+        ].forEach(input => {
             if (input) input.disabled = provider !== 'whisper';
         });
     };
@@ -217,9 +383,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (codingLanguageSelect) {
         codingLanguageSelect.addEventListener('change', (e) => {
             const lang = e.target.value;
+
             // use electronAPI so main broadcast is consistent
             if (window.electronAPI && window.electronAPI.saveSettings) {
-                window.electronAPI.saveSettings({ codingLanguage: lang });
+                window.electronAPI.saveSettings({
+                    codingLanguage: lang
+                });
             } else {
                 // fallback
                 saveSettings();
@@ -230,9 +399,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Skill selection handler
     if (activeSkillSelect) {
         activeSkillSelect.addEventListener('change', (e) => {
+            const selectedSkill = normalizeSkillId(e.target.value);
+
+            if (!selectedSkill) return;
+
+            // Save the setting and notify the main process so the session context
+            // and the overlay indicator change immediately.
             saveSettings();
-            // Also update the main window
-            window.api.send('update-skill', e.target.value);
+            window.api.send('update-skill', selectedSkill);
         });
     }
 
@@ -243,9 +417,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!iconGrid) return;
 
         const icons = [
-            { key: 'terminal', name: 'Terminal', src: './assests/icons/terminal.png' },
-            { key: 'activity', name: 'Activity', src: './assests/icons/activity.png' },
-            { key: 'settings', name: 'Settings', src: './assests/icons/settings.png' }
+            {
+                key: 'terminal',
+                name: 'Terminal',
+                src: './assests/icons/terminal.png'
+            },
+            {
+                key: 'activity',
+                name: 'Activity',
+                src: './assests/icons/activity.png'
+            },
+            {
+                key: 'settings',
+                name: 'Settings',
+                src: './assests/icons/settings.png'
+            }
         ];
 
         iconGrid.innerHTML = '';
@@ -254,23 +440,27 @@ document.addEventListener('DOMContentLoaded', () => {
             const iconElement = document.createElement('div');
             iconElement.className = 'icon-option';
             iconElement.dataset.icon = icon.key;
-            
+
             const img = document.createElement('img');
             img.src = icon.src;
             img.alt = icon.name;
+
             img.onload = () => {
                 logger.info('Icon loaded successfully:', icon.src);
             };
+
             img.onerror = () => {
                 console.error('Failed to load icon:', icon.src);
+
                 // Try alternative paths
                 const altPaths = [
                     `./assests/${icon.key}.png`,
                     `./assets/icons/${icon.key}.png`,
                     `./assets/${icon.key}.png`
                 ];
-                
+
                 let pathIndex = 0;
+
                 const tryNextPath = () => {
                     if (pathIndex < altPaths.length) {
                         img.src = altPaths[pathIndex];
@@ -280,41 +470,44 @@ document.addEventListener('DOMContentLoaded', () => {
                         console.error('All icon paths failed for:', icon.key);
                     }
                 };
-                
+
                 img.onload = () => {
                     logger.info('Icon loaded with alternative path:', img.src);
                 };
-                
+
                 img.onerror = tryNextPath;
                 tryNextPath();
             };
-            
+
             const label = document.createElement('div');
             label.textContent = icon.name;
-            
+
             iconElement.appendChild(img);
             iconElement.appendChild(label);
-            
+
             // Click handler for icon selection
-            iconElement.addEventListener('click', () => {                
+            iconElement.addEventListener('click', () => {
                 // Remove selection from all icons
                 iconGrid.querySelectorAll('.icon-option').forEach(opt => {
                     opt.classList.remove('selected');
                 });
-                
+
                 // Add selection to clicked icon
                 iconElement.classList.add('selected');
-                
+
                 // Save the selection - this should trigger the app icon change
-                window.api.send('save-settings', { selectedIcon: icon.key });
-                
+                window.api.send('save-settings', {
+                    selectedIcon: icon.key
+                });
+
                 // Show visual feedback
                 iconElement.style.transform = 'scale(0.95)';
+
                 setTimeout(() => {
                     iconElement.style.transform = 'scale(1)';
                 }, 100);
             });
-            
+
             iconGrid.appendChild(iconElement);
         });
     };
@@ -333,4 +526,4 @@ document.addEventListener('DOMContentLoaded', () => {
             window.api.send('close-settings');
         }
     });
-}); 
+});

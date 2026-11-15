@@ -7,3 +7,7 @@ dist/
 bin/
 .DS_Store
 *.log
+
+# Environment variables
+.env.*
+!.env.example
