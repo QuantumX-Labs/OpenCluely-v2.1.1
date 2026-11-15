@@ -1,8 +1,8 @@
 <div align="center">
 
-# OpenCluely
+# OpenCluely-v2.0
 
-**The invisible AI interview copilot.**
+**The invisible AI interview copilot with Multi Skill Support.**
 
 Real-time AI help on a stealth overlay that screen sharing cannot see. Ask by voice or screenshot, and get clear answers that stream in as you need them.
 
@@ -155,7 +155,7 @@ For Azure Speech, create a Speech resource in the [Azure Portal](https://portal.
 
 ## Project status
 
-OpenCluely is under active development. The core is stable and improvements ship regularly.
+OpenCluely-v2.0 is under active development. The core is stable and improvements ship regularly.
 
 ### Done
 
@@ -215,7 +215,7 @@ OpenCluely is under active development. The core is stable and improvements ship
 
 ## Privacy and ethics
 
-OpenCluely collects no data and sends no telemetry. Processing happens locally, and your session stays on your device. Requests to the AI provider are encrypted in transit.
+OpenCluely-v2.0 collects no data and sends no telemetry. Processing happens locally, and your session stays on your device. Requests to the AI provider are encrypted in transit.
 
 The app is built for learning and practice. You are responsible for following the rules of any interview you take and the policies of the companies involved.
 
@@ -232,6 +232,6 @@ Released under the MIT License. See [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-Built by [TechyCSR](https://techycsr.dev). If OpenCluely helped you, consider giving it a star ⭐
+Built by [TechyCSR](https://techycsr.dev).Modify & Reverse Engineering by [Rudranil](https://github.com/rudra00434) If OpenCluely-v2.0 helped you, consider giving it a star ⭐
 
 </div>
