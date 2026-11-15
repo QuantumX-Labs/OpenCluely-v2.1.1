@@ -26,7 +26,7 @@ https://github.com/user-attachments/assets/896a7140-1e85-405d-bfbe-e05c9f3a816b
 
 ## What it is
 
-OpenCluely is a desktop app for technical interviews and practice. It places a small overlay on your screen that recording and conferencing tools do not capture. You can speak a question or take a screenshot, and the AI answers in real time. The answer streams into a floating window and an optional chat panel, with clean code blocks and syntax highlighting.
+OpenCluely-v2.0 is a desktop app for technical interviews and practice. It places a small overlay on your screen that recording and conferencing tools do not capture. You can speak a question or take a screenshot, and the AI answers in real time. The answer streams into a floating window and an optional chat panel, with clean code blocks and syntax highlighting.
 
 It is free and open source. Processing stays on your machine, and the only thing that leaves your device is the request you send to the AI provider.
 
@@ -232,6 +232,6 @@ Released under the MIT License. See [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-Built by [TechyCSR](https://techycsr.dev).Modify & Reverse Engineering by [Rudranil](https://github.com/rudra00434) If OpenCluely-v2.0 helped you, consider giving it a star ⭐
+Built by [TechyCSR](https://techycsr.dev). Modify & Reverse Engineering by [Rudranil](https://github.com/rudra00434)                                                         If OpenCluely-v2.0 helped you, consider giving it a star ⭐
 
 </div>
