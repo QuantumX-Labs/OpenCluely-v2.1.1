@@ -221,7 +221,7 @@ The app is built for learning and practice. You are responsible for following th
 
 ## License
 
-Released under the MIT License. See [LICENSE](LICENSE) for details.
+Released under the Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
